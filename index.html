@@ -52,7 +52,23 @@
   #tFire{bottom:30px; right:18px; background:rgba(255,46,136,.16); border-color:rgba(255,46,136,.6); color:var(--neon2); width:88px; height:88px; font-size:34px;}
   #tGas{bottom:124px; right:24px; width:64px; height:64px;}
   #tNitro{bottom:124px; left:60px; width:64px; height:64px; font-size:24px; background:rgba(255,215,0,.14); border-color:rgba(255,215,0,.6); color:var(--gold);}
-  @media (pointer:coarse){ #touch{display:block;} }
+
+  /* Nome + Ranking */
+  .namebox{display:flex; flex-direction:column; gap:6px; align-items:center;}
+  .namebox label{font-size:13px; letter-spacing:2px; color:var(--neon);}
+  #nameInput{pointer-events:auto; text-align:center; text-transform:uppercase; font-weight:bold; letter-spacing:2px;
+    font-size:clamp(16px,3.4vw,22px); padding:10px 18px; width:min(280px,72vw); border-radius:12px;
+    background:#0b1428; color:#fff; border:2px solid rgba(0,240,255,.5); outline:none;}
+  #nameInput:focus{border-color:var(--neon); box-shadow:0 0 18px rgba(0,240,255,.5);}
+  #rankWrap{width:min(440px,88vw);}
+  #rankTitle{font-size:clamp(15px,3vw,20px); color:var(--gold); letter-spacing:2px; margin-bottom:8px; text-shadow:0 0 10px rgba(255,215,0,.5);}
+  #rankList{list-style:none; text-align:left; display:flex; flex-direction:column; gap:4px;}
+  #rankList li{display:flex; justify-content:space-between; gap:10px; padding:7px 14px; border-radius:9px;
+    background:rgba(0,240,255,.07); border:1px solid rgba(0,240,255,.18); font-size:clamp(13px,2.6vw,17px);}
+  #rankList li .pos{color:var(--neon); width:34px; flex:none;}
+  #rankList li .nm{flex:1; color:#eaf6ff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  #rankList li .pts{color:var(--gold); font-variant-numeric:tabular-nums; flex:none;}
+  #rankList li.me{background:rgba(255,46,136,.18); border-color:var(--neon2);}
 </style>
 </head>
 <body>
@@ -74,6 +90,10 @@
       <h2>🏎️💨 &nbsp; corre, atira, sobrevive &nbsp; 🔫💥</h2>
       <p>Você é o piloto mais rápido da estrada. Desvie ou <b>exploda</b> os carros inimigos.
          A noite cai, a velocidade sobe. Quantos pontos você aguenta?</p>
+      <div class="namebox">
+        <label for="nameInput">SEU NOME (entra no ranking 🏆)</label>
+        <input id="nameInput" maxlength="14" placeholder="DIGITE AQUI" autocomplete="off" autocapitalize="characters">
+      </div>
       <button class="play" id="btnStart">JOGAR ▶</button>
       <div class="keys">
         <kbd>← →</kbd> ou <kbd>A</kbd> <kbd>D</kbd> virar &nbsp;•&nbsp;
@@ -88,6 +108,10 @@
       <h1>FIM DE JOGO</h1>
       <h2 id="finalScore">PONTOS 0</h2>
       <p id="finalLine">Boa corrida!</p>
+      <div id="rankWrap">
+        <div id="rankTitle">🏆 RANKING</div>
+        <ol id="rankList"></ol>
+      </div>
       <button class="play" id="btnRetry">DE NOVO 🔁</button>
     </div>
 
@@ -167,6 +191,15 @@ let started = false;
 const keys = {};
 const input = { left:false, right:false, gas:false, brake:false, fire:false, nitro:false };
 const IS_TOUCH = !!(window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+
+/* ===== RANKING =====
+   Vazio  = ranking LOCAL (só neste aparelho).
+   Com URL = ranking GLOBAL compartilhado entre todos os aparelhos.
+   Cole aqui a URL do Firebase Realtime DB, ex:
+   const LEADERBOARD_URL = "https://turbo-strike-xxxx-default-rtdb.firebaseio.com"; */
+const LEADERBOARD_URL = "";
+const LB_LOCAL_KEY = 'turbostrike_ranking';
+let playerName = '';
 
 // ============================================================
 //  Util
@@ -657,32 +690,89 @@ function loop(t){
 //  Controle de telas
 // ============================================================
 function startGame(){
+  // captura o nome do piloto
+  const stored = (function(){ try{return localStorage.getItem('turbostrike_name')||'';}catch(e){return '';} })();
+  const fromInput = ((document.getElementById('nameInput')||{}).value||'').trim();
+  playerName = ((fromInput || stored || 'PILOTO').toUpperCase()).slice(0,14);
+  try{ localStorage.setItem('turbostrike_name', playerName); }catch(e){}
+
   buildTrack(); resetCars();
   position=0; speed=0; playerX=0; score=0; shield=3; combo=0; comboTimer=0;
   bullets=[]; particles=[]; timeOfDay=0.05; shakeT=0;
   document.getElementById('start').classList.add('hidden');
   document.getElementById('over').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
+  if(IS_TOUCH) document.getElementById('touch').style.display='block';
   state='play';
   startEngine();
 }
-function gameOver(){
+
+/* ---- placar: local sempre; online se LEADERBOARD_URL preenchido ---- */
+function lbLocalGet(){ try{ return JSON.parse(localStorage.getItem(LB_LOCAL_KEY)||'[]'); }catch(e){ return []; } }
+function lbLocalAdd(entry){
+  const a = lbLocalGet(); a.push(entry); a.sort((x,y)=>y.score-x.score);
+  try{ localStorage.setItem(LB_LOCAL_KEY, JSON.stringify(a.slice(0,50))); }catch(e){}
+}
+async function submitScore(entry){
+  lbLocalAdd(entry);
+  if(LEADERBOARD_URL){
+    try{ await fetch(LEADERBOARD_URL.replace(/\/+$/,'')+'/scores.json',
+      {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(entry)}); }
+    catch(e){ console.warn('ranking online (envio) falhou, valeu o local', e); }
+  }
+}
+async function fetchRanking(){
+  if(LEADERBOARD_URL){
+    try{
+      const r = await fetch(LEADERBOARD_URL.replace(/\/+$/,'')+'/scores.json');
+      const d = await r.json();
+      if(d) return Object.values(d).filter(e=>e && typeof e.score==='number').sort((a,b)=>b.score-a.score);
+      return [];
+    }catch(e){ console.warn('ranking online (leitura) falhou, usando local', e); }
+  }
+  return lbLocalGet();
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function renderRanking(list, mine){
+  const ol = document.getElementById('rankList'); ol.innerHTML='';
+  const medals = ['🥇','🥈','🥉'];
+  const top = list.slice(0,10);
+  let shownMe = false;
+  top.forEach((e,i)=>{
+    const li = document.createElement('li');
+    if(mine && !shownMe && e.name===mine.name && e.score===mine.score){ li.className='me'; shownMe=true; }
+    li.innerHTML = '<span class="pos">'+(medals[i]||(i+1))+'</span>'+
+                   '<span class="nm">'+escapeHtml(e.name)+'</span>'+
+                   '<span class="pts">'+e.score.toLocaleString('pt-BR')+'</span>';
+    ol.appendChild(li);
+  });
+  if(top.length===0){ ol.innerHTML='<li><span class="nm">Seja o primeiro a marcar! 🏁</span></li>'; }
+  else if(mine && !shownMe){
+    const idx = list.findIndex(e=>e.name===mine.name && e.score===mine.score);
+    const li = document.createElement('li'); li.className='me';
+    li.innerHTML = '<span class="pos">'+(idx>=0?idx+1:'–')+'</span>'+
+                   '<span class="nm">'+escapeHtml(mine.name)+'</span>'+
+                   '<span class="pts">'+mine.score.toLocaleString('pt-BR')+'</span>';
+    ol.appendChild(li);
+  }
+}
+
+async function gameOver(){
   state='over'; stopEngine();
   document.getElementById('hud').classList.add('hidden');
+  document.getElementById('touch').style.display='none';
   const sc = Math.floor(score);
-  let best = 0; try{ best = +(localStorage.getItem('turbostrike_best')||0); }catch(e){}
-  let novoRecorde = false;
-  if(sc>best){ best=sc; novoRecorde=true; try{ localStorage.setItem('turbostrike_best',best); }catch(e){} }
-  document.getElementById('finalScore').textContent='PONTOS '+sc.toLocaleString('pt-BR');
-  const lines=[
-    'Mandou bem! Bora de novo?',
-    'Foi rápido demais pra essa estrada! 🔥',
-    'Os inimigos não tiveram chance. Quase.',
-    'Pilotando que nem profissional 🏁'
-  ];
-  const head = novoRecorde ? '🏆 NOVO RECORDE!' : ('🏆 Recorde: '+best.toLocaleString('pt-BR'));
-  document.getElementById('finalLine').innerHTML = '<b>'+head+'</b><br>'+lines[U.randInt(0,lines.length-1)];
+  const entry = { name: playerName||'PILOTO', score: sc, ts: Date.now() };
+  document.getElementById('finalScore').textContent = 'PONTOS '+sc.toLocaleString('pt-BR');
+  document.getElementById('finalLine').textContent = LEADERBOARD_URL ? 'salvando no ranking…' : 'ranking deste aparelho';
   document.getElementById('over').classList.remove('hidden');
+
+  await submitScore(entry);
+  const list = await fetchRanking();
+  renderRanking(list, entry);
+  const myRank = list.findIndex(e=>e.name===entry.name && e.score===entry.score) + 1;
+  document.getElementById('finalLine').textContent =
+    myRank===1 ? '👑 VOCÊ É O Nº 1!' : (myRank>0 ? ('Você ficou em #'+myRank+' 🔁') : 'Bora de novo! 🔁');
 }
 
 document.getElementById('btnStart').onclick = ()=>{ audio(); startGame(); };
@@ -696,11 +786,16 @@ const KEYMAP = {
   ArrowUp:'gas', KeyW:'gas', ArrowDown:'brake', KeyS:'brake',
   Space:'fire', ShiftLeft:'nitro', ShiftRight:'nitro'
 };
+function typingInField(){ const a=document.activeElement; return a && a.tagName==='INPUT'; }
 window.addEventListener('keydown', e=>{
+  if(typingInField()){                                   // digitando o nome: não roubar as teclas
+    if(e.code==='Enter'){ document.activeElement.blur(); audio(); startGame(); }
+    return;
+  }
   if(KEYMAP[e.code]){ e.preventDefault(); input[KEYMAP[e.code]]=true; if(KEYMAP[e.code]==='fire'&&state==='play') fire(); }
   if(e.code==='Enter' && state!=='play'){ audio(); startGame(); }
 });
-window.addEventListener('keyup', e=>{ if(KEYMAP[e.code]){ e.preventDefault(); input[KEYMAP[e.code]]=false; } });
+window.addEventListener('keyup', e=>{ if(typingInField()) return; if(KEYMAP[e.code]){ e.preventDefault(); input[KEYMAP[e.code]]=false; } });
 // tiro contínuo segurando espaço
 setInterval(()=>{ if(input.fire && state==='play') fire(); }, 130);
 
@@ -723,6 +818,9 @@ bindTouch('tFire','fire', ()=>{ if(state==='play') fire(); audio(); });
 // (mantém gás de fundo leve pra não parar parado)
 
 buildTrack(); resetCars();   // pista pronta já no menu (fundo animado + sem crash)
+// pré-preenche o nome salvo e esconde os botões touch fora do jogo
+try{ const n=localStorage.getItem('turbostrike_name'); if(n) document.getElementById('nameInput').value=n; }catch(e){}
+document.getElementById('touch').style.display='none';
 requestAnimationFrame(loop);
 </script>
 </body>
