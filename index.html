@@ -91,8 +91,8 @@
       <p>Você é o piloto mais rápido da estrada. Desvie ou <b>exploda</b> os carros inimigos.
          A noite cai, a velocidade sobe. Quantos pontos você aguenta?</p>
       <div class="namebox">
-        <label for="nameInput">SEU NOME (entra no ranking 🏆)</label>
-        <input id="nameInput" maxlength="14" placeholder="DIGITE AQUI" autocomplete="off" autocapitalize="characters">
+        <label for="nameInput">SEU PRIMEIRO NOME (entra no ranking 🏆)</label>
+        <input id="nameInput" maxlength="12" placeholder="EX: GABRIEL" autocomplete="off" autocapitalize="characters">
       </div>
       <button class="play" id="btnStart">JOGAR ▶</button>
       <div class="keys">
@@ -693,7 +693,8 @@ function startGame(){
   // captura o nome do piloto
   const stored = (function(){ try{return localStorage.getItem('turbostrike_name')||'';}catch(e){return '';} })();
   const fromInput = ((document.getElementById('nameInput')||{}).value||'').trim();
-  playerName = ((fromInput || stored || 'PILOTO').toUpperCase()).slice(0,14);
+  const raw = (fromInput || stored || 'PILOTO');
+  playerName = raw.trim().split(/\s+/)[0].toUpperCase().slice(0,12);  // só o primeiro nome
   try{ localStorage.setItem('turbostrike_name', playerName); }catch(e){}
 
   buildTrack(); resetCars();
